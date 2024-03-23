@@ -1,65 +1,62 @@
 from __future__ import print_function, division
 
+import os, shutil
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-
 import torchvision
 from torchvision import models, transforms, datasets
+from torch.utils.data import DataLoader, Subset, Dataset
 
-import torch.optim as optim
-from torch.utils.data import DataLoader, Subset
-
-import PIL.Image as Image
 from tqdm import tqdm
-import os
-import time
-
 from sklearn.metrics import f1_score
 
 from model.vgg16 import *
 from model.hybrid_CNN import Hybrid_Conv2d
 
+from PIL import Image
+
 experiment_name = 'hybrid_vgg16_bn_32_lr_1e-5'
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
+class MyCelebA(datasets.CelebA):
+    def _check_integrity(self) -> bool:
+        return True
 
 # get dataset
 def load_data(batch_size, use_subset=True):
     """
     return the train/val/test dataloader
     """
-    
+
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5] * 3, std=[0.5] * 3)
     ])
-    
-    train_dataset = datasets.CelebA(root='./data',
+
+    train_dataset = MyCelebA(root='./data',
                                     split='train',
                                     target_type='attr',
                                     transform=transform,
                                     download=False)
-    val_dataset = datasets.CelebA(root='./data',
+    val_dataset = MyCelebA(root='./data',
                                     split='valid',
                                     target_type='attr',
                                     transform=transform,
                                     download=False)
-    test_dataset = datasets.CelebA(root='./data',
+    test_dataset = MyCelebA(root='./data',
                                     split='test',
                                     target_type='attr',
                                     transform=transform,
                                     download=False)
-    
+
     indices_train = list(range(700))
     indices_val = list(range(150))    
     indices_test = list(range(150))
-    
+
     train_subset = Subset(train_dataset, indices_train)
     val_subset = Subset(train_dataset, indices_val)
     test_subset = Subset(test_dataset, indices_test)
@@ -82,19 +79,20 @@ def initialize_model(model, learning_rate, num_classes):
     """
     initialize the model (pretrained vgg16_bn)
     define loss function and optimizer and move data to gpu if available
-    
+
     return:
         model, loss function(criterion), optimizer
     """
-    
+
     num_ftrs = model.classifier[6].in_features
     model.classifier[6] = nn.Linear(num_ftrs, num_classes)
     model = model.to(device)
-    
+
     # Define loss function and optimizer
     criterion = nn.CrossEntropyLoss()   # potential alternative: nn.BCELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     return model, criterion, optimizer
+
 
 def make_plots(step_hist, loss_hist, epoch=0):
     plt.plot(step_hist, loss_hist)
@@ -120,24 +118,24 @@ def train(train_loader, model, criterion, optimizer, num_epochs):
             label = labels[:, 2]   # attractiveness label
             cov_attr = labels[:, 20]    # gender (male/female)   
             cov_attr = (cov_attr + 1) // 2  # map from {-1, 1} to {0, 1}
-            
+
             # move to gpu if available
             images = images.to(device)
             label = label.to(device)
-            
+
             # forward pass
             if isinstance(model, HybridVGG16):
                 outputs = model(images, cov_attr)    # hybrid model takes covariate here
             elif isinstance(model, VGG):
                 outputs = model(images)              # baseline vgg
-            
-            loss = criterion(outputs, label) 
-            
+
+            loss = criterion(outputs, label)
+
             # backward
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            
+
             if (i+1) % 100 == 0:
                 print('Epoch: [{}/{}], Step[{}/{}], Loss:{:.4f}' \
                         .format(epoch+1, num_epochs, i+1, len(train_loader), loss.item()))
@@ -146,9 +144,9 @@ def train(train_loader, model, criterion, optimizer, num_epochs):
                         .format(epoch+1, num_epochs, i+1, len(train_loader), loss.item()), file=f)
                 loss_hist.append(loss.item())
                 step_hist.append(i+1)
-        
+
         make_plots(step_hist, loss_hist, epoch)
-        
+
     # torch.save(model.state_dict(), experiment_name+'.ckpt')
 
 
@@ -160,8 +158,8 @@ def evaluate(val_loader, model):
     # model_path = "{}.ckpt".format(experiment_name)
     # state_dict = torch.load(model_path)
     # model.load_state_dict(state_dict)
-    
-    model.eval() 
+
+    model.eval()
     with torch.no_grad():
         correct = 0
         total = 0
@@ -171,19 +169,19 @@ def evaluate(val_loader, model):
             label = labels[:, 2]
             cov_attr = labels[:, 20]    # gender (male/female)   
             cov_attr = (cov_attr + 1) // 2  # map from {-1, 1} to {0, 1}
-            
+
             # move to device
             images = images.to(device)
             label = label.to(device)
-            
+
             # forward pass
             if isinstance(model, HybridVGG16):
                 outputs = model(images, cov_attr)    # hybrid model takes covariate here
             elif isinstance(model, VGG):
                 outputs = model(images)              # baseline vgg
-                
+
             _, predicted = torch.max(outputs.data, dim=1)
-            
+
             # accumulate stats
             y_true.append(label.cpu().numpy()) # in the one
             y_pred.append(predicted.cpu().numpy())
@@ -198,28 +196,32 @@ def evaluate(val_loader, model):
         with open(experiment_name+'.txt', 'a') as f:
             print('F1 Score: {}'.format(f1_score(y_true, y_pred, average='macro')), file=f)
             print('Validation accuracy: {}'.format(correct / total), file=f)
-    
-    
+
+
 def main():
-    # hyper parameters    
+    # hyper parameters
     num_epochs = 1
     num_classes = 2
     batch_size = 32
     learning_rate = 1e-5
-    model_name = HybridVGG16()
-    # model_name = vgg16_bn(pretrained=True) # baseline model
-    
+    # model_name = HybridVGG16()
+    model_name = vgg16_bn(pretrained=True)  # baseline model
+
     print("Loading data...")
-    train_loader, val_loader, test_loader = load_data(batch_size, use_subset=False)
-    
+    train_loader, val_loader, test_loader = load_data(batch_size,
+                                                      use_subset=True)
+
     print("Initializing model...")
-    model, criterion, optimizer = initialize_model(model_name, learning_rate, num_classes)
-   
+    model, criterion, optimizer = initialize_model(model_name,
+                                                   learning_rate,
+                                                   num_classes)
+
     print("Start training... \n")
     train(train_loader, model, criterion, optimizer, num_epochs)
-    
+
     print("Start evaluating... \n")
-    evaluate(val_loader, model)    
+    evaluate(val_loader, model)
+
 
 if __name__ == "__main__":
     main()

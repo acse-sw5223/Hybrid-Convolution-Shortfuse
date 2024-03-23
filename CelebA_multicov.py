@@ -28,34 +28,39 @@ experiment_name = 'hybrid_bs_32_lr_1e-5_multicov_latefuse40'
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 
+class MyCelebA(datasets.CelebA):
+    def _check_integrity(self) -> bool:
+        return True
+
+
 # get dataset
 def load_data(batch_size, use_subset=True):
     """
     return the train/val/test dataloader
     """
-    
+
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5] * 3, std=[0.5] * 3)
     ])
-    
-    train_dataset = datasets.CelebA(root='./data',
+
+    train_dataset = MyCelebA(root='./data',
                                     split='train',
                                     target_type='attr',
                                     transform=transform,
                                     download=False)
-    val_dataset = datasets.CelebA(root='./data',
+    val_dataset = MyCelebA(root='./data',
                                     split='valid',
                                     target_type='attr',
                                     transform=transform,
                                     download=False)
-    test_dataset = datasets.CelebA(root='./data',
+    test_dataset = MyCelebA(root='./data',
                                     split='test',
                                     target_type='attr',
                                     transform=transform,
                                     download=False)
-    
+
     indices_train = list(range(700))
     indices_val = list(range(150))    
     indices_test = list(range(150))
@@ -224,16 +229,16 @@ def main():
     learning_rate = 1e-5
     model_name = HybridVGG16_v40()
     # model_name = vgg16_bn(pretrained=True) # baseline model
-    
+
     print("Loading data...")
     train_loader, val_loader, test_loader = load_data(batch_size, use_subset=True)
-    
+
     print("Initializing model...")
     model, criterion, optimizer = initialize_model(model_name, learning_rate, num_classes)
-   
+
     print("Start training... \n")
     train(train_loader, model, criterion, optimizer, num_epochs)
-    
+
     print("Start evaluating... \n")
     evaluate(val_loader, model)    
 
