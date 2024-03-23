@@ -1,6 +1,8 @@
-*.ckpt
 data/celeba/img_align_celeba
 data/celeba/img_align_celeba*
+
+*.ckpt
 *.pyc
 *.pth
+
 .DS_Store

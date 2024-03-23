@@ -1,8 +1,9 @@
+import os
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from model.hybrid_conv_multicovariate import Hybrid_Conv2d_v2
+from torch.hub import load_state_dict_from_url
 
 
 model_urls = {
@@ -17,8 +18,8 @@ model_path = {
 
 
 class VGG(nn.Module):
-
-    def __init__(self, features, num_classes=1000, init_weights=True): # change to binary classifier
+    # change to binary classifier
+    def __init__(self, features, num_classes=1000, init_weights=True):
         super(VGG, self).__init__()
         self.features = features
         self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
@@ -70,8 +71,11 @@ def make_layers(cfg, batch_norm=False):
             in_channels = v
     return nn.Sequential(*layers)
 
+
 # M means MaxPool
-cfg = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M']
+cfg = [64, 64, 'M', 128, 128, 'M',
+       256, 256, 256, 'M', 512, 512, 512, 'M',
+       512, 512, 512, 'M']
 
 
 def _vgg(arch, cfg, batch_norm, pretrained, progress, **kwargs):
@@ -79,7 +83,18 @@ def _vgg(arch, cfg, batch_norm, pretrained, progress, **kwargs):
         kwargs['init_weights'] = False
     model = VGG(make_layers(cfg, batch_norm=batch_norm), **kwargs)
     if pretrained:
-        state_dict = torch.load(model_path[arch])
+        # Check if the file exists
+        if not os.path.isfile(model_path[arch]):
+            # If the file does not exist, download the weights
+            os.makedirs(os.path.dirname(model_path[arch]), exist_ok=True)
+            state_dict = load_state_dict_from_url(model_urls[arch],
+                                                  progress=progress)
+            # Save the weights to the file
+            torch.save(state_dict, model_path[arch])
+        else:
+            # If the file exists, load the weights
+            state_dict = torch.load(model_path[arch])
+
         model.load_state_dict(state_dict)
     return model
 
@@ -107,11 +122,10 @@ def vgg16_bn(pretrained=False, progress=True, **kwargs):
     return _vgg('vgg16_bn', cfg, True, pretrained, progress, **kwargs)
 
 
-
 class HybridVGG16(nn.Module):
     """
     Hybrid Vgg16_bn network: A pretrained vgg16_bn with FIRST conv layer being a Hybrid_Conv2d layer
-    
+
     """
     def __init__(self):
         super(HybridVGG16, self).__init__()
@@ -123,11 +137,11 @@ class HybridVGG16(nn.Module):
         self.features = vgg.features[1:]
         self.avgpool = vgg.avgpool
         self.classifier = vgg.classifier
-        
+
         # hybrid layers
         # self.hybrid_conv = Hybrid_Conv2d(3, 64, kernel_size=(64, 3, 3, 3)) 
         self.hybrid_conv = Hybrid_Conv2d_v2(3, 64, kernel_size=(64, 3, 3, 3)) 
-        
+
     # Set your own forward pass
     def forward(self, x, cov):
         x = self.hybrid_conv(x, cov)
@@ -136,7 +150,6 @@ class HybridVGG16(nn.Module):
         x = torch.flatten(x, 1)
         x = self.classifier(x)
         return x
-
 
 
 class HybridVGG16_v2(nn.Module):
@@ -155,10 +168,10 @@ class HybridVGG16_v2(nn.Module):
         self.features_2 = vgg.features[4:]
         self.avgpool = vgg.avgpool
         self.classifier = vgg.classifier
-        
+
         # hybrid layer - to replace vgg.features[3]
         self.hybrid_conv = Hybrid_Conv2d_v2(64, 64, kernel_size=(64, 64, 3, 3)) 
-        
+
     # Set your own forward pass
     def forward(self, x, cov):
         x = self.features_1(x)
@@ -167,9 +180,9 @@ class HybridVGG16_v2(nn.Module):
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
-        return 
-    
-    
+        return
+
+
 class HybridVGG16_v3(nn.Module):
     """
     Hybrid Vgg16_bn network: A pretrained vgg16_bn with THIRD conv layer (vgg.feature[7]) being a Hybrid_Conv2d layer
@@ -181,14 +194,15 @@ class HybridVGG16_v3(nn.Module):
 
         # set the three blocks you need for forward pass
         # remove the first conv layer + relu from the feature extractor
-        self.features_1 = vgg.features[0:7] # layers 0-6
-        self.features_2 = vgg.features[8:]  # layers 
+        self.features_1 = vgg.features[0:7]  # layers 0-6
+        self.features_2 = vgg.features[8:]  # layers
         self.avgpool = vgg.avgpool
         self.classifier = vgg.classifier
-        
+
         # hybrid layer - to replace vgg.features[7]
-        self.hybrid_conv = Hybrid_Conv2d_v2(64, 128, kernel_size=(128, 64, 3, 3)) 
-        
+        self.hybrid_conv = Hybrid_Conv2d_v2(64, 128,
+                                            kernel_size=(128, 64, 3, 3))
+
     # Set your own forward pass
     def forward(self, x, cov):
         x = self.features_1(x)
@@ -198,11 +212,12 @@ class HybridVGG16_v3(nn.Module):
         x = torch.flatten(x, 1)
         x = self.classifier(x)
         return x
-    
-    
+
+
 class HybridVGG16_v10(nn.Module):
     """
-    LateFused Hybrid Vgg16_bn network: A pretrained vgg16_bn with 5th conv layer (feature[14]) being a Hybrid_Conv2d layer
+    LateFused Hybrid Vgg16_bn network: A pretrained vgg16_bn with 5th conv
+    layer (feature[14]) being a Hybrid_Conv2d layer
     """
     def __init__(self):
         super(HybridVGG16_v10, self).__init__()
@@ -211,14 +226,14 @@ class HybridVGG16_v10(nn.Module):
 
         # set the three blocks you need for forward pass
         # remove the first conv layer + relu from the feature extractor
-        self.features_1 = vgg.features[0:14] # layers 0-39
-        self.features_2 = vgg.features[15:]  # layers 
+        self.features_1 = vgg.features[0:14]  # layers 0-39
+        self.features_2 = vgg.features[15:]  # layers
         self.avgpool = vgg.avgpool
         self.classifier = vgg.classifier
-        
+
         # hybrid layer - to replace vgg.features[7]
         self.hybrid_conv = Hybrid_Conv2d_v2(128, 256, kernel_size=(256, 128, 3, 3)) 
-        
+
     # Set your own forward pass
     def forward(self, x, cov):
         x = self.features_1(x)
@@ -228,7 +243,8 @@ class HybridVGG16_v10(nn.Module):
         x = torch.flatten(x, 1)
         x = self.classifier(x)
         return x
-    
+
+
 class HybridVGG16_v40(nn.Module):
     """
     LateFused Hybrid Vgg16_bn network: A pretrained vgg16_bn with LAST conv layer (vgg.feature[40]) being a Hybrid_Conv2d layer
@@ -240,14 +256,15 @@ class HybridVGG16_v40(nn.Module):
 
         # set the three blocks you need for forward pass
         # remove the first conv layer + relu from the feature extractor
-        self.features_1 = vgg.features[0:40] # layers 0-39
-        self.features_2 = vgg.features[41:]  # layers 
+        self.features_1 = vgg.features[0:40]  # layers 0-39
+        self.features_2 = vgg.features[41:]  # layers
         self.avgpool = vgg.avgpool
         self.classifier = vgg.classifier
-        
+
         # hybrid layer - to replace vgg.features[7]
-        self.hybrid_conv = Hybrid_Conv2d_v2(512, 512, kernel_size=(512, 512, 3, 3)) 
-        
+        self.hybrid_conv = Hybrid_Conv2d_v2(512, 512,
+                                            kernel_size=(512, 512, 3, 3))
+
     # Set your own forward pass
     def forward(self, x, cov):
         x = self.features_1(x)
